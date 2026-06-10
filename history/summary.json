@@ -4,19 +4,19 @@
     "url": "https://tediware.com/",
     "icon": "https://icons.duckduckgo.com/ip3/tediware.com.ico",
     "slug": "tediware",
-    "status": "down",
-    "uptime": "100.00%",
-    "uptimeDay": "100.00%",
-    "uptimeWeek": "100.00%",
-    "uptimeMonth": "100.00%",
-    "uptimeYear": "100.00%",
-    "time": 334,
-    "timeDay": 241,
-    "timeWeek": 284,
-    "timeMonth": 327,
-    "timeYear": 334,
+    "status": "up",
+    "uptime": "99.66%",
+    "uptimeDay": "88.08%",
+    "uptimeWeek": "98.30%",
+    "uptimeMonth": "99.61%",
+    "uptimeYear": "99.66%",
+    "time": 331,
+    "timeDay": 246,
+    "timeWeek": 280,
+    "timeMonth": 324,
+    "timeYear": 331,
     "dailyMinutesDown": {
-      "2026-06-10": 0
+      "2026-06-10": 172
     }
   }
 ]
