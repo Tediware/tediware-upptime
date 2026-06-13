@@ -4,6 +4,11 @@ repo: tediware-upptime
 sites:
   - name: Tediware
     url: https://tediware.com/
+    # Retry a failed check up to 5 times with exponential backoff (~31s window)
+    # before declaring the site down, instead of the default 3 (~7s). Guards
+    # against transient code:0 false positives from the GitHub Actions runner
+    # (momentary DNS/TLS/network blips), like the 2026-06-10 false outage.
+    maxRetries: 5
 
 assignees:
   - adriand
