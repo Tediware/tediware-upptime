@@ -5,16 +5,16 @@
     "icon": "https://icons.duckduckgo.com/ip3/tediware.com.ico",
     "slug": "tediware",
     "status": "up",
-    "uptime": "99.89%",
+    "uptime": "99.90%",
     "uptimeDay": "100.00%",
     "uptimeWeek": "99.17%",
     "uptimeMonth": "99.81%",
-    "uptimeYear": "99.89%",
-    "time": 356,
-    "timeDay": 278,
-    "timeWeek": 420,
-    "timeMonth": 372,
-    "timeYear": 356,
+    "uptimeYear": "99.90%",
+    "time": 353,
+    "timeDay": 192,
+    "timeWeek": 409,
+    "timeMonth": 367,
+    "timeYear": 353,
     "dailyMinutesDown": {
       "2026-06-27": 83
     }
