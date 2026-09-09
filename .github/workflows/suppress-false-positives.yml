@@ -1,0 +1,183 @@
+#
+# ==========================================
+# This one IS safe to edit — it is ours, not Upptime's.
+# ==========================================
+#
+# `Update Template CI` only deletes the eight workflows it generates
+# (graphs, response-time, setup, site, summary, update-template, updates, uptime).
+# See upptime/uptime-monitor `src/update-template.ts` — it removes those by name,
+# not by glob, so any other filename here survives. No `.templaterc.json` is
+# needed; the updater actively deletes that file anyway.
+#
+# WHAT THIS DOES
+# --------------
+# Upptime records a "down" period from a GitHub *issue* (created_at -> closed_at).
+# A monitoring-side false positive is machine-recognizable: the issue body carries
+# `HTTP code: 0` AND `Response time: 0 ms`, meaning the runner got no HTTP response
+# at all. This job re-probes the site independently; if the site answers cleanly,
+# the original verdict was a runner-side network blip, so it strips the `status`
+# label (which removes the period from the uptime calc), tags it `false-positive`,
+# comments with the evidence, and closes it.
+#
+# LIMITS — read before trusting this
+# ----------------------------------
+# `code: 0` also describes a genuine hard-down (connection refused, DNS gone).
+# The discriminator is timing: this runs ~2 min after each uptime check and acts
+# ONLY on issues still OPEN, so a site that is really down is still down when we
+# probe, the probes fail, and we leave it alone. The residual risk is a REAL
+# outage shorter than one 5-minute cycle that recovers before we probe.
+# That failure mode is self-correcting: if the site is still down on Upptime's
+# next run, it just opens a fresh issue, so at most ~5 min of real downtime is
+# understated. Everything here is reversible — re-add the `status` label to
+# restore the incident, then re-run `Summary CI` + `Graphs CI`.
+
+name: Suppress False Positives
+
+on:
+  schedule:
+    # Offset 2 minutes from Uptime CI's */5 so we probe just after a verdict lands.
+    - cron: "2-59/5 * * * *"
+  repository_dispatch:
+    types: [suppress_false_positives]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.repository }}-suppress-false-positives
+  cancel-in-progress: false
+
+permissions:
+  issues: write
+  actions: write
+
+jobs:
+  suppress:
+    name: Suppress runner-side false positives
+    runs-on: ubuntu-latest
+    steps:
+      - name: Re-probe open incidents and suppress false positives
+        id: suppress
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GH_PAT || github.token }}
+          script: |
+            const PROBE_COUNT = 3;
+            const PROBE_GAP_MS = 5000;
+            const PROBE_TIMEOUT_MS = 15000;
+            const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+            const openIncidents = await github.paginate(github.rest.issues.listForRepo, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: "status",
+              state: "open",
+              per_page: 100,
+            });
+
+            if (openIncidents.length === 0) {
+              core.info("No open incident issues. Nothing to do.");
+              core.setOutput("suppressed", "0");
+              return;
+            }
+
+            const suppressed = [];
+            const kept = [];
+
+            for (const issue of openIncidents) {
+              const body = issue.body || "";
+              const noResponse =
+                /HTTP code:\s*0\b/.test(body) && /Response time:\s*0\s*ms/.test(body);
+
+              if (!noResponse) {
+                kept.push(`#${issue.number} — a real HTTP status was recorded, not a \`code: 0\` blip`);
+                continue;
+              }
+
+              // The body links the commit on github.com and the monitored site.
+              // The site is the first parenthesized URL that is not github.com.
+              const urls = [...body.matchAll(/\((https?:\/\/[^)\s]+)\)/g)].map((m) => m[1]);
+              const target = urls.find((u) => !u.includes("github.com"));
+
+              if (!target) {
+                kept.push(`#${issue.number} — could not determine the target URL from the issue body`);
+                continue;
+              }
+
+              const probes = [];
+              for (let i = 0; i < PROBE_COUNT; i++) {
+                if (i > 0) await sleep(PROBE_GAP_MS);
+                try {
+                  const res = await fetch(target, {
+                    redirect: "follow",
+                    signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+                  });
+                  probes.push({ ok: res.status >= 200 && res.status < 400, detail: `HTTP ${res.status}` });
+                } catch (err) {
+                  probes.push({ ok: false, detail: `no response (${err.name})` });
+                }
+              }
+
+              const evidence = probes.map((p, i) => `probe ${i + 1}: ${p.detail}`).join(", ");
+
+              if (!probes.every((p) => p.ok)) {
+                kept.push(`#${issue.number} — ${target} did not answer cleanly (${evidence}); treating as a REAL outage`);
+                continue;
+              }
+
+              await github.rest.issues.removeLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                name: "status",
+              });
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                labels: ["false-positive"],
+              });
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body: [
+                  "**Suppressed as a monitoring-side false positive.**",
+                  "",
+                  `The check recorded \`HTTP code: 0\` and \`Response time: 0 ms\` — no HTTP response reached the runner at all. This job re-probed <${target}> independently and it answered normally: ${evidence}.`,
+                  "",
+                  "The `status` label has been removed, so this period no longer counts toward uptime. To undo, re-add the `status` label and re-run `Summary CI` and `Graphs CI`.",
+                  "",
+                  `_Automated by [\`suppress-false-positives.yml\`](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/blob/HEAD/.github/workflows/suppress-false-positives.yml) — [run log](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})._`,
+                ].join("\n"),
+              });
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: "closed",
+              });
+
+              suppressed.push(`#${issue.number} — ${target} answered cleanly (${evidence})`);
+            }
+
+            const lines = ["## Suppress False Positives", ""];
+            lines.push(`Open incidents examined: **${openIncidents.length}**`);
+            lines.push(`Suppressed as false positives: **${suppressed.length}**`, "");
+            if (suppressed.length) lines.push("### Suppressed", ...suppressed.map((s) => `- ${s}`), "");
+            if (kept.length) lines.push("### Left alone", ...kept.map((s) => `- ${s}`), "");
+            await core.summary.addRaw(lines.join("\n")).write();
+
+            core.setOutput("suppressed", String(suppressed.length));
+
+      - name: Recompute uptime stats
+        if: steps.suppress.outputs.suppressed != '0'
+        env:
+          # GITHUB_TOKEN cannot trigger another workflow, so a PAT is required here.
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::warning::GH_PAT is not set, so Summary CI / Graphs CI cannot be dispatched from here. The nightly runs will pick up the corrected stats instead."
+            exit 0
+          fi
+          gh workflow run "Summary CI" --repo "$GITHUB_REPOSITORY"
+          gh workflow run "Graphs CI" --repo "$GITHUB_REPOSITORY"
+          echo "Dispatched Summary CI and Graphs CI to recompute uptime."
